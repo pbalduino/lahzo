@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: lahzo
+      POSTGRES_PASSWORD: lahzo
+      POSTGRES_DB: lahzo
+    ports:
+      - "5432:5432"
+    volumes:
+      - lahzo-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lahzo -d lahzo"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  web:
+    build:
+      context: .
+    command: npm run start
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgres://lahzo:lahzo@postgres:5432/lahzo
+      SMS_GATEWAY: ${SMS_GATEWAY:-mock}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_API_KEY_SID: ${TWILIO_API_KEY_SID:-}
+      TWILIO_API_KEY_SECRET: ${TWILIO_API_KEY_SECRET:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_MESSAGING_SERVICE_SID: ${TWILIO_MESSAGING_SERVICE_SID:-}
+      SIMULATED_DELAY_MIN_MS: 3000
+      SIMULATED_DELAY_MAX_MS: 15000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+    command: npm run dev:worker
+    environment:
+      DATABASE_URL: postgres://lahzo:lahzo@postgres:5432/lahzo
+      SMS_GATEWAY: ${SMS_GATEWAY:-mock}
+      TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID:-}
+      TWILIO_API_KEY_SID: ${TWILIO_API_KEY_SID:-}
+      TWILIO_API_KEY_SECRET: ${TWILIO_API_KEY_SECRET:-}
+      TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN:-}
+      TWILIO_MESSAGING_SERVICE_SID: ${TWILIO_MESSAGING_SERVICE_SID:-}
+      SIMULATED_DELAY_MIN_MS: 3000
+      SIMULATED_DELAY_MAX_MS: 15000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  lahzo-postgres:
