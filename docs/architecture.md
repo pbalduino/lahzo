@@ -73,7 +73,7 @@ If the worker crashes after claiming a job, the job is not lost. Claimed jobs ha
 
 Outbound sends are keyed by the outbound message id. In the mock gateway, the same idempotency key returns the same provider response, so a retry after a crash does not create a duplicate send in the assessment environment.
 
-The real Twilio gateway can be enabled with `SMS_GATEWAY=twilio`. It uses `TWILIO_ACCOUNT_SID` plus either API key credentials (`TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`) or `TWILIO_AUTH_TOKEN`. When using the real provider, full exactly-once outbound delivery still depends on provider behavior or a stronger delivery ledger/outbox design.
+The real Twilio gateway can be enabled with `SMS_GATEWAY=twilio`. The simplest configuration is `TWILIO_ACCOUNT_SID` plus `TWILIO_AUTH_TOKEN`. API key credentials (`TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`) are also supported. When using the real provider, full exactly-once outbound delivery still depends on provider behavior or a stronger delivery ledger/outbox design.
 
 ## Admin interface and authentication
 
