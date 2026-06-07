@@ -184,6 +184,43 @@ test("full inbound-to-outbound flow completes through the worker", async () => {
   expect(outbound.providerMessageId).toMatch(/^mock_twilio_/);
 });
 
+test("dev inbound route respects UI outbound From and To fields", async () => {
+  process.env.SIMULATED_DELAY_MIN_MS = "1";
+  process.env.SIMULATED_DELAY_MAX_MS = "1";
+
+  const { repository, sms } = await loadModules();
+  const { POST } = await import("../app/api/dev/inbound/route");
+  const { smsGateway } = await import("../src/lib/twilio");
+  const sendSpy = vi.spyOn(smsGateway, "sendSms");
+
+  const response = await POST(
+    new Request("http://localhost/api/dev/inbound", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        from: "+15013659142",
+        to: "+5511975185804",
+        body: "Real phone test",
+      }),
+    }),
+  );
+
+  const payload = (await response.json()) as { conversationId: string };
+  await sms.processNextJob("test-worker");
+
+  const conversation = await repository.getConversationById(payload.conversationId);
+  expect(conversation?.fromPhone).toBe("+5511975185804");
+  expect(conversation?.toPhone).toBe("+15013659142");
+  expect(sendSpy).toHaveBeenCalledWith(
+    expect.objectContaining({
+      from: "+15013659142",
+      to: "+5511975185804",
+    }),
+  );
+});
+
 test("failed outbound delivery is retried without creating a duplicate outbound message", async () => {
   process.env.SIMULATED_DELAY_MIN_MS = "1";
   process.env.SIMULATED_DELAY_MAX_MS = "1";

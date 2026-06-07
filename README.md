@@ -68,9 +68,9 @@ The health check also reports whether the worker heartbeat is fresh enough to co
 - `DATABASE_POOL_MAX` optional Postgres pool size
 - `SMS_GATEWAY` optional outbound gateway, either `mock` or `twilio`
 - `TWILIO_ACCOUNT_SID` required when `SMS_GATEWAY=twilio`
-- `TWILIO_API_KEY_SID` required for Twilio API key auth
-- `TWILIO_API_KEY_SECRET` required for Twilio API key auth
-- `TWILIO_AUTH_TOKEN` optional fallback if not using API key auth
+- `TWILIO_AUTH_TOKEN` enough for simple Twilio auth with `TWILIO_ACCOUNT_SID`
+- `TWILIO_API_KEY_SID` optional API key auth alternative
+- `TWILIO_API_KEY_SECRET` optional API key auth alternative
 - `TWILIO_MESSAGING_SERVICE_SID` optional sender override for Twilio Messaging Services
 - `SIMULATED_DELAY_MIN_MS` optional minimum worker delay
 - `SIMULATED_DELAY_MAX_MS` optional maximum worker delay
@@ -78,7 +78,15 @@ The health check also reports whether the worker heartbeat is fresh enough to co
 
 ## Real Twilio outbound
 
-The app uses the mock SMS gateway by default. To send real outbound SMS, set:
+The app uses the mock SMS gateway by default. To send real outbound SMS with account SID + auth token, set:
+
+```bash
+SMS_GATEWAY=twilio
+TWILIO_ACCOUNT_SID=AC...
+TWILIO_AUTH_TOKEN=...
+```
+
+API key auth is also supported:
 
 ```bash
 SMS_GATEWAY=twilio
@@ -94,6 +102,8 @@ By default, replies are sent from the phone number that received the inbound SMS
 The admin interface is available at `/`. It lists conversations, shows operational metrics, and links to `/conversations/[conversationId]` for the full inbound/outbound message history and message statuses.
 
 Authentication is intentionally omitted because the assessment states it is not required.
+
+The test SMS form is written from the operator's perspective: `From` is the Twilio sender number and `To` is the user phone number that should receive the async reply.
 
 Frontend coverage:
 

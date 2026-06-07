@@ -10,13 +10,18 @@ export async function POST(request: Request) {
       body?: string;
     };
 
-    if (!payload.from || !payload.to) {
+    const outboundFrom = payload.from?.trim();
+    const outboundTo = payload.to?.trim();
+
+    if (!outboundFrom || !outboundTo) {
       return NextResponse.json({ error: "from and to are required" }, { status: 400 });
     }
 
     const result = await createMockInboundMessage({
-      from: payload.from,
-      to: payload.to,
+      // The admin form is written as an outbound test send: From is the Twilio
+      // number and To is the user. Twilio inbound webhooks arrive inverted.
+      from: outboundTo,
+      to: outboundFrom,
       body: payload.body ?? "",
     });
 
@@ -24,6 +29,8 @@ export async function POST(request: Request) {
       duplicate: result.duplicate,
       conversationId: result.conversationId,
       inboundMessageId: result.inboundMessage.id,
+      outboundFrom,
+      outboundTo,
     });
 
     return NextResponse.json(
@@ -31,6 +38,8 @@ export async function POST(request: Request) {
         duplicate: result.duplicate,
         conversationId: result.conversationId,
         inboundMessageId: result.inboundMessage.id,
+        outboundFrom,
+        outboundTo,
       },
       { status: 202 },
     );

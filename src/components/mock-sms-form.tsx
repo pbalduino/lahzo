@@ -14,8 +14,8 @@ export function MockSmsForm() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>({
-    from: "+15550001111",
-    to: "+15550009999",
+    from: "",
+    to: "",
     body: "Hello from the assessment demo.",
   });
 
@@ -49,8 +49,8 @@ export function MockSmsForm() {
   return (
     <section className="panel">
       <div className="panel-header">
-        <strong>Demo inbound SMS</strong>
-        <span className="small">Creates a new webhook event locally</span>
+        <strong>Send test SMS</strong>
+        <span className="small">Creates an inbound event and sends the async reply</span>
       </div>
       <div className="panel-body">
         <form className="form-grid" onSubmit={onSubmit}>
@@ -58,6 +58,8 @@ export function MockSmsForm() {
             <label htmlFor="from">From</label>
             <input
               id="from"
+              placeholder="+15013659142"
+              required
               value={form.from}
               onChange={(event) => setForm((current) => ({ ...current, from: event.target.value }))}
             />
@@ -66,6 +68,8 @@ export function MockSmsForm() {
             <label htmlFor="to">To</label>
             <input
               id="to"
+              placeholder="+5511975185804"
+              required
               value={form.to}
               onChange={(event) => setForm((current) => ({ ...current, to: event.target.value }))}
             />
