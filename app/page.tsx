@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { env } from "@/lib/env";
 import { getOperationalMetrics, listConversations } from "@/lib/repository";
 import { MockSmsForm } from "@/components/mock-sms-form";
 
@@ -36,6 +37,7 @@ export default async function HomePage() {
     listConversations(),
     getOperationalMetrics(),
   ]);
+  const showMockSmsForm = env.SMS_GATEWAY === "mock";
 
   return (
     <main>
@@ -50,7 +52,7 @@ export default async function HomePage() {
             </p>
           </header>
 
-          <MockSmsForm />
+          {showMockSmsForm ? <MockSmsForm /> : null}
 
           <section className="panel">
             <div className="panel-header">
@@ -60,7 +62,9 @@ export default async function HomePage() {
             <div className="panel-body">
               {conversations.length === 0 ? (
                 <div className="empty-state">
-                  No conversations yet. Use the demo form above to create one.
+                  {showMockSmsForm
+                    ? "No conversations yet. Use the demo form above to create one."
+                    : "No conversations yet. Send an SMS to the configured Twilio number to create one."}
                 </div>
               ) : (
                 <div className="conversation-list">

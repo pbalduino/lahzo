@@ -12,19 +12,16 @@ A small full-stack TypeScript app for a conversational SMS system:
 
 Architecture in one line: layered TypeScript app, repository-backed durable Postgres queue, separate worker process, and SMS gateway adapter for mock or real Twilio delivery.
 
-## Run locally
+## Required tools
 
-```bash
-npm install
-npm run dev
-```
-
-`npm run dev` starts:
-
-- `next dev` for the web app
-- `tsx scripts/worker.ts` for the background worker
+- Docker and Docker Compose: recommended way to run the full stack
+- Node.js 24: required for local development outside Docker
+- npm: required for local scripts and dependency installation
+- ngrok: required only for local end-to-end Twilio webhook testing
 
 ## Run with Docker
+
+Docker is the preferred way to run the project because it starts the web app, worker, and Postgres with the same topology used by the assessment.
 
 ```bash
 docker compose up --build
@@ -36,15 +33,69 @@ This starts:
 - `worker` polling the same Postgres-backed queue
 - `postgres` on port `5432`
 
+Open:
+
+```text
+http://localhost:3000
+```
+
+## Run without Docker
+
+Use this only if you already have Postgres running locally.
+
+Create a local database:
+
+```bash
+createdb lahzo
+```
+
+Create a local `.env` file:
+
+```bash
+DATABASE_URL=postgres://YOUR_USER:YOUR_PASSWORD@localhost:5432/lahzo
+SMS_GATEWAY=mock
+```
+
+If your local Postgres accepts socket or trust authentication, the URL may not need a password:
+
+```bash
+DATABASE_URL=postgres://YOUR_USER@localhost:5432/lahzo
+```
+
+```bash
+npm install
+npm run db:reset
+npm run dev
+```
+
+`npm run dev` starts:
+
+- `next dev` for the web app
+- `tsx scripts/worker.ts` for the background worker
+
 ## Useful commands
 
 ```bash
 npm run test
+```
+
+Runs the automated test suite against a real Postgres instance. Start Postgres first:
+
+```bash
+docker compose up -d postgres
+```
+
+```bash
 npm run db:seed
+```
+
+Creates sample conversations and processes them through the worker flow. Useful for quickly populating the admin UI.
+
+```bash
 npm run db:reset
 ```
 
-Tests run against a real Postgres instance, not an in-memory database. Start it with `docker compose up -d postgres` before running `npm test`.
+Clears conversations, messages, jobs, and worker heartbeats from Postgres. Useful before a clean manual test.
 
 ## Operational endpoints
 
@@ -97,13 +148,15 @@ TWILIO_API_KEY_SECRET=...
 
 By default, replies are sent from the phone number that received the inbound SMS (`To` in the webhook). If you prefer a Twilio Messaging Service, set `TWILIO_MESSAGING_SERVICE_SID`.
 
+For local end-to-end Twilio testing, expose the app with ngrok and configure the Twilio number's inbound SMS webhook. See [docs/twilio-setup.md](docs/twilio-setup.md).
+
 ## Admin UI
 
 The admin interface is available at `/`. It lists conversations, shows operational metrics, and links to `/conversations/[conversationId]` for the full inbound/outbound message history and message statuses.
 
 Authentication is intentionally omitted because the assessment states it is not required.
 
-The test SMS form is written from the operator's perspective: `From` is the Twilio sender number and `To` is the user phone number that should receive the async reply.
+When `SMS_GATEWAY=mock`, the home page also shows a developer SMS simulator. When `SMS_GATEWAY=twilio`, that form is hidden so real Twilio testing happens through the actual SMS webhook flow: send an SMS from a phone to the Twilio number and let the worker reply.
 
 Frontend coverage:
 

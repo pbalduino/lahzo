@@ -89,6 +89,8 @@ Frontend coverage:
 - each message displays its current status
 - no authentication flow is implemented by design
 
+The developer SMS simulator is shown only when `SMS_GATEWAY=mock`. When the real Twilio gateway is enabled, the simulator is hidden so testing follows the production path: a phone sends SMS to Twilio, Twilio calls the webhook, and the worker sends the reply.
+
 ## Data model
 
 Main tables:
@@ -187,6 +189,7 @@ Operational requirements:
 - keep the worker process deployed independently from the web process
 - configure Twilio inbound SMS to call `POST /api/webhooks/twilio`
 - use `SMS_GATEWAY=mock` for local review and `SMS_GATEWAY=twilio` for real outbound SMS
+- for local Twilio testing, use ngrok and the setup steps in `docs/twilio-setup.md`
 - store Twilio credentials in secret management rather than committed files
 - monitor `/api/health`, `/api/metrics`, structured logs, worker heartbeat freshness, queue depth, and failed jobs
 
