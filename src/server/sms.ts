@@ -124,6 +124,16 @@ export async function processNextJob(workerId: string) {
     await markInboundAsSent(inboundMessage.id);
     await completeJob(claimedJob.id);
 
+    logger.info("sent outbound sms", {
+      workerId,
+      jobId: claimedJob.id,
+      inboundMessageId: inboundMessage.id,
+      outboundMessageId: outboundMessage.id,
+      providerMessageId: providerResponse.providerMessageId,
+      from: conversation.toPhone,
+      to: conversation.fromPhone,
+    });
+
     return claimedJob;
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown processing error";
