@@ -384,37 +384,6 @@ export async function listPendingJobs(limit = 1): Promise<ProcessJob[]> {
   return rows.rows.map(mapJobRow);
 }
 
-export async function claimJob(jobId: string, workerId: string) {
-  const timestamp = nowIso();
-  const result = await query<JobRow>(
-    `
-    UPDATE jobs
-    SET status = 'running',
-        locked_at = $1,
-        locked_by = $2,
-        lease_expires_at = $3,
-        attempts = attempts + 1,
-        updated_at = $4
-    WHERE id = $5
-      AND (
-        status = 'pending'
-        OR (status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= $6)
-      )
-    RETURNING id, type, status, payload_json, attempts, max_attempts, available_at, lease_expires_at
-  `,
-    [
-      timestamp,
-      workerId,
-      new Date(Date.now() + JOB_LEASE_MS).toISOString(),
-      timestamp,
-      jobId,
-      timestamp,
-    ],
-  );
-
-  return result.rows[0] ? mapJobRow(result.rows[0]) : null;
-}
-
 export async function claimJobs(workerId: string, limit: number) {
   const timestamp = nowIso();
   const leaseExpiresAt = new Date(Date.now() + JOB_LEASE_MS).toISOString();

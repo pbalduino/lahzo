@@ -55,7 +55,7 @@ export async function initializeDatabase() {
 export async function resetDatabase() {
   await initializeDatabase();
   await getPool().query(`
-    TRUNCATE worker_heartbeats, jobs, messages, conversations RESTART IDENTITY CASCADE
+    TRUNCATE schema_migrations, worker_heartbeats, jobs, messages, conversations RESTART IDENTITY CASCADE
   `);
 }
 
