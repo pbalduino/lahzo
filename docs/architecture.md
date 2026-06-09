@@ -21,6 +21,7 @@ Patterns used:
 - idempotent ingest: duplicate Twilio deliveries are deduplicated by `MessageSid`
 - lease-based job claiming: workers can recover jobs after crashes without losing work
 - webhook authenticity: real Twilio traffic is validated with `X-Twilio-Signature`
+- schema migrations: lightweight `schema_migrations` tracking prevents boot-time DDL from rerunning
 
 ## Request flow
 
@@ -37,7 +38,7 @@ Twilio has a 5-second timeout, while processing takes 3-15 seconds. The webhook 
 
 ## Decoupling message processing
 
-Processing is decoupled through a durable `jobs` table. The worker claims jobs using an atomic `UPDATE ... RETURNING` guard so two workers do not process the same job concurrently.
+Processing is decoupled through a durable `jobs` table. The worker claims jobs in batches using `FOR UPDATE SKIP LOCKED` plus `UPDATE ... RETURNING`, so two workers do not process the same job concurrently and each batch gets up to N currently claimable jobs atomically.
 
 Each worker processes up to `WORKER_CONCURRENCY` jobs concurrently per polling cycle. The default is `5`, which avoids serializing all 3-15 second processing delays behind a single job while keeping the implementation simple enough to review. Additional worker replicas can run horizontally because job ownership is guarded in the database.
 
@@ -50,7 +51,7 @@ This gives the key behavior the assessment asks for:
 - clear job ownership
 - no dependence on request latency
 
-The worker also writes a heartbeat row in the database. The health endpoint can therefore distinguish between "database reachable" and "worker stale, missing, or down".
+The worker also writes a heartbeat row in the database on an interval independent of job processing. The health endpoint can therefore distinguish between "database reachable" and "worker stale, missing, or down" even while the worker is handling slower 3-15 second jobs.
 
 ## Idempotency and duplicate webhook deliveries
 
@@ -103,6 +104,7 @@ Main tables:
 - `conversations`: one row per phone pair
 - `messages`: inbound and outbound SMS records, status, `TIMESTAMPTZ` lifecycle timestamps, error state, and linkage between inbound and outbound messages
 - `jobs`: durable processing queue with attempt tracking and retry timing
+- `schema_migrations`: lightweight migration ledger for startup-managed schema changes
 - the outbound send key is stable per generated reply, which makes retry behavior deterministic
 
 Why this shape:
@@ -134,6 +136,7 @@ What I chose:
 - a separate worker process so webhook latency is independent from message processing time
 - configurable per-worker concurrency so slow message processing does not serialize all queued work
 - atomic job claiming and leases so multiple workers can run without double-processing the same job
+- lightweight schema migration tracking instead of rerunning DDL at every startup
 - mock Twilio gateway by default to avoid external setup during review, with a real Twilio gateway available by configuration
 
 ### Postgres queue vs RabbitMQ
@@ -168,6 +171,7 @@ What I accepted:
 
 - Postgres-backed queues are a good fit for this scale and exercise, but they require careful indexing, bounded polling, and operational visibility
 - a broker is not required to prove the architecture, because the code already isolates the queue behind repository functions and a worker boundary
+- the built-in migration ledger is intentionally small for the assessment; a production service would move to a dedicated migration tool such as Flyway, Prisma Migrate, Drizzle Kit, or node-pg-migrate
 - the polling interval is intentionally small and simple for review; production tuning would depend on measured traffic, queue depth, job age, and database load
 
 ## What I would change for production scale
@@ -175,6 +179,7 @@ What I accepted:
 - horizontally scale worker replicas with the existing claim/lease mechanism
 - add indexes and dashboards around queue depth, job age, attempts, and failed jobs
 - move from polling to `LISTEN/NOTIFY` or a broker such as SQS/RabbitMQ if queue depth or latency metrics justify it
+- replace startup-managed schema changes with a dedicated migration pipeline
 - add a proper outbox/inbox pattern with a delivery ledger
 - tune `WORKER_CONCURRENCY` and worker replica count from queue-depth and job-age metrics
 - add tracing and dead-letter handling

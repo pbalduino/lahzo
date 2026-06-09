@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import twilio from "twilio";
 import { z } from "zod";
 import {
-  claimJob,
+  claimJobs,
   completeJob,
   createMockInboundSms,
   ensureOutboundResponseForInbound,
@@ -10,7 +10,6 @@ import {
   getConversationById,
   getMessageById,
   ingestInboundSms,
-  listPendingJobs,
   markInboundAsFailed,
   markInboundAsProcessing,
   markInboundAsSent,
@@ -18,6 +17,7 @@ import {
   markOutboundAsSending,
   markOutboundAsSent,
 } from "@/lib/repository";
+import type { ProcessJob } from "@/lib/repository";
 import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { randomBetween, sleep } from "@/lib/time";
@@ -122,30 +122,39 @@ export async function createMockInboundMessage(input: { from: string; to: string
 }
 
 export async function processNextJob(workerId: string) {
-  const [job] = await listPendingJobs(1);
-  return processJob(workerId, job?.id ?? null);
+  const claimedJob = await claimJobFromQueue(workerId);
+  return claimedJob ? processClaimedJob(workerId, claimedJob) : null;
 }
 
 export async function processNextJobs(workerId: string, limit: number) {
-  const jobs = await listPendingJobs(limit);
-  if (jobs.length === 0) {
+  const claimedJobs = await claimJobs(workerId, limit);
+  if (claimedJobs.length === 0) {
     return [];
   }
 
-  const processed = await Promise.all(jobs.map((job) => processJob(workerId, job.id)));
-  return processed.filter((job): job is NonNullable<typeof job> => job !== null);
+  const results = await Promise.allSettled(claimedJobs.map((job) => processClaimedJob(workerId, job)));
+  const processed: ProcessJob[] = [];
+
+  for (const result of results) {
+    if (result.status === "fulfilled") {
+      processed.push(result.value);
+    } else {
+      logger.error("claimed job crashed outside processing guard", {
+        workerId,
+        error: result.reason instanceof Error ? result.reason.message : "unknown error",
+      });
+    }
+  }
+
+  return processed;
 }
 
-async function processJob(workerId: string, jobId: string | null) {
-  if (!jobId) {
-    return null;
-  }
+async function claimJobFromQueue(workerId: string) {
+  const [claimedJob] = await claimJobs(workerId, 1);
+  return claimedJob ?? null;
+}
 
-  const claimedJob = await claimJob(jobId, workerId);
-  if (!claimedJob) {
-    return null;
-  }
-
+async function processClaimedJob(workerId: string, claimedJob: ProcessJob) {
   logger.info("claimed job", { workerId, jobId: claimedJob.id, messageId: claimedJob.payload.messageId });
 
   const inboundMessage = await getMessageById(claimedJob.payload.messageId);

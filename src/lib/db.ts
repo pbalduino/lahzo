@@ -131,33 +131,62 @@ async function initializeSchema() {
       created_at TIMESTAMPTZ NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id TEXT PRIMARY KEY,
+      applied_at TIMESTAMPTZ NOT NULL
+    );
   `);
 
-  await database.query(`
-    ALTER TABLE conversations
-      ALTER COLUMN last_message_at TYPE TIMESTAMPTZ USING last_message_at::timestamptz,
-      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
-      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
+  await runMigration(
+    database,
+    "20260609_001_convert_temporal_columns_to_timestamptz",
+    `
+      ALTER TABLE conversations
+        ALTER COLUMN last_message_at TYPE TIMESTAMPTZ USING last_message_at::timestamptz,
+        ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+        ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
 
-    ALTER TABLE messages
-      ALTER COLUMN received_at TYPE TIMESTAMPTZ USING received_at::timestamptz,
-      ALTER COLUMN processing_started_at TYPE TIMESTAMPTZ USING processing_started_at::timestamptz,
-      ALTER COLUMN processed_at TYPE TIMESTAMPTZ USING processed_at::timestamptz,
-      ALTER COLUMN sent_at TYPE TIMESTAMPTZ USING sent_at::timestamptz,
-      ALTER COLUMN failed_at TYPE TIMESTAMPTZ USING failed_at::timestamptz,
-      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
-      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
+      ALTER TABLE messages
+        ALTER COLUMN received_at TYPE TIMESTAMPTZ USING received_at::timestamptz,
+        ALTER COLUMN processing_started_at TYPE TIMESTAMPTZ USING processing_started_at::timestamptz,
+        ALTER COLUMN processed_at TYPE TIMESTAMPTZ USING processed_at::timestamptz,
+        ALTER COLUMN sent_at TYPE TIMESTAMPTZ USING sent_at::timestamptz,
+        ALTER COLUMN failed_at TYPE TIMESTAMPTZ USING failed_at::timestamptz,
+        ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+        ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
 
-    ALTER TABLE jobs
-      ALTER COLUMN available_at TYPE TIMESTAMPTZ USING available_at::timestamptz,
-      ALTER COLUMN locked_at TYPE TIMESTAMPTZ USING locked_at::timestamptz,
-      ALTER COLUMN lease_expires_at TYPE TIMESTAMPTZ USING lease_expires_at::timestamptz,
-      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
-      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
+      ALTER TABLE jobs
+        ALTER COLUMN available_at TYPE TIMESTAMPTZ USING available_at::timestamptz,
+        ALTER COLUMN locked_at TYPE TIMESTAMPTZ USING locked_at::timestamptz,
+        ALTER COLUMN lease_expires_at TYPE TIMESTAMPTZ USING lease_expires_at::timestamptz,
+        ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+        ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
 
-    ALTER TABLE worker_heartbeats
-      ALTER COLUMN last_seen_at TYPE TIMESTAMPTZ USING last_seen_at::timestamptz,
-      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
-      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
-  `);
+      ALTER TABLE worker_heartbeats
+        ALTER COLUMN last_seen_at TYPE TIMESTAMPTZ USING last_seen_at::timestamptz,
+        ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+        ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
+    `,
+  );
+}
+
+async function runMigration(database: Pool, id: string, sql: string) {
+  const existing = await database.query("SELECT 1 FROM schema_migrations WHERE id = $1", [id]);
+  if (existing.rowCount) {
+    return;
+  }
+
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(sql);
+    await client.query("INSERT INTO schema_migrations (id, applied_at) VALUES ($1, NOW())", [id]);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

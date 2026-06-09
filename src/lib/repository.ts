@@ -415,6 +415,38 @@ export async function claimJob(jobId: string, workerId: string) {
   return result.rows[0] ? mapJobRow(result.rows[0]) : null;
 }
 
+export async function claimJobs(workerId: string, limit: number) {
+  const timestamp = nowIso();
+  const leaseExpiresAt = new Date(Date.now() + JOB_LEASE_MS).toISOString();
+  const result = await query<JobRow>(
+    `
+    WITH candidates AS (
+      SELECT id
+      FROM jobs
+      WHERE (status = 'pending' AND available_at <= $1)
+         OR (status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at <= $2)
+      ORDER BY available_at ASC, created_at ASC
+      FOR UPDATE SKIP LOCKED
+      LIMIT $3
+    )
+    UPDATE jobs
+    SET status = 'running',
+        locked_at = $4,
+        locked_by = $5,
+        lease_expires_at = $6,
+        attempts = attempts + 1,
+        updated_at = $7
+    FROM candidates
+    WHERE jobs.id = candidates.id
+    RETURNING jobs.id, jobs.type, jobs.status, jobs.payload_json, jobs.attempts,
+      jobs.max_attempts, jobs.available_at, jobs.lease_expires_at
+  `,
+    [timestamp, timestamp, limit, timestamp, workerId, leaseExpiresAt, timestamp],
+  );
+
+  return result.rows.map(mapJobRow);
+}
+
 export async function completeJob(jobId: string) {
   await query(
     `
