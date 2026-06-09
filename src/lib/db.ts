@@ -75,9 +75,9 @@ async function initializeSchema() {
       id TEXT PRIMARY KEY,
       from_phone TEXT NOT NULL,
       to_phone TEXT NOT NULL,
-      last_message_at TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL,
+      last_message_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL,
       UNIQUE(from_phone, to_phone)
     );
 
@@ -91,13 +91,13 @@ async function initializeSchema() {
       error TEXT,
       related_inbound_message_id TEXT UNIQUE,
       provider_message_id TEXT,
-      received_at TEXT NOT NULL,
-      processing_started_at TEXT,
-      processed_at TEXT,
-      sent_at TEXT,
-      failed_at TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      received_at TIMESTAMPTZ NOT NULL,
+      processing_started_at TIMESTAMPTZ,
+      processed_at TIMESTAMPTZ,
+      sent_at TIMESTAMPTZ,
+      failed_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_messages_conversation_created_at
@@ -111,15 +111,15 @@ async function initializeSchema() {
       type TEXT NOT NULL,
       status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'completed', 'failed')),
       payload_json JSONB NOT NULL,
-      available_at TEXT NOT NULL,
-      locked_at TEXT,
+      available_at TIMESTAMPTZ NOT NULL,
+      locked_at TIMESTAMPTZ,
       locked_by TEXT,
-      lease_expires_at TEXT,
+      lease_expires_at TIMESTAMPTZ,
       attempts INTEGER NOT NULL DEFAULT 0,
       max_attempts INTEGER NOT NULL DEFAULT 5,
       last_error TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
     );
 
     CREATE INDEX IF NOT EXISTS idx_jobs_status_available_at
@@ -127,9 +127,37 @@ async function initializeSchema() {
 
     CREATE TABLE IF NOT EXISTS worker_heartbeats (
       worker_id TEXT PRIMARY KEY,
-      last_seen_at TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
+      last_seen_at TIMESTAMPTZ NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
     );
+  `);
+
+  await database.query(`
+    ALTER TABLE conversations
+      ALTER COLUMN last_message_at TYPE TIMESTAMPTZ USING last_message_at::timestamptz,
+      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
+
+    ALTER TABLE messages
+      ALTER COLUMN received_at TYPE TIMESTAMPTZ USING received_at::timestamptz,
+      ALTER COLUMN processing_started_at TYPE TIMESTAMPTZ USING processing_started_at::timestamptz,
+      ALTER COLUMN processed_at TYPE TIMESTAMPTZ USING processed_at::timestamptz,
+      ALTER COLUMN sent_at TYPE TIMESTAMPTZ USING sent_at::timestamptz,
+      ALTER COLUMN failed_at TYPE TIMESTAMPTZ USING failed_at::timestamptz,
+      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
+
+    ALTER TABLE jobs
+      ALTER COLUMN available_at TYPE TIMESTAMPTZ USING available_at::timestamptz,
+      ALTER COLUMN locked_at TYPE TIMESTAMPTZ USING locked_at::timestamptz,
+      ALTER COLUMN lease_expires_at TYPE TIMESTAMPTZ USING lease_expires_at::timestamptz,
+      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
+
+    ALTER TABLE worker_heartbeats
+      ALTER COLUMN last_seen_at TYPE TIMESTAMPTZ USING last_seen_at::timestamptz,
+      ALTER COLUMN created_at TYPE TIMESTAMPTZ USING created_at::timestamptz,
+      ALTER COLUMN updated_at TYPE TIMESTAMPTZ USING updated_at::timestamptz;
   `);
 }

@@ -22,6 +22,8 @@ TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=...
 ```
 
+`TWILIO_AUTH_TOKEN` is required for inbound webhook signature validation. Signature validation is enabled by default when `SMS_GATEWAY=twilio`.
+
 API key auth is also supported:
 
 ```bash
@@ -30,6 +32,8 @@ TWILIO_ACCOUNT_SID=AC...
 TWILIO_API_KEY_SID=SK...
 TWILIO_API_KEY_SECRET=...
 ```
+
+If you use API key auth for outbound SMS, still provide `TWILIO_AUTH_TOKEN` when accepting real inbound Twilio webhooks so the app can validate `X-Twilio-Signature`.
 
 ## 3. Expose localhost with ngrok
 
@@ -92,6 +96,12 @@ The response should include:
 
 ## 6. Test the webhook without sending SMS
 
+Real Twilio requests include `X-Twilio-Signature`, but a basic local `curl` does not. For an unsigned local smoke test only, temporarily set this in `.env` and restart the web service:
+
+```bash
+TWILIO_VALIDATE_SIGNATURE=false
+```
+
 ```bash
 curl -i -X POST "https://example.ngrok-free.app/api/webhooks/twilio" \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -105,6 +115,12 @@ Expected response:
 
 ```text
 202 Accepted
+```
+
+Turn signature validation back on before testing real SMS:
+
+```bash
+TWILIO_VALIDATE_SIGNATURE=true
 ```
 
 ## 7. Test real SMS
@@ -132,5 +148,6 @@ After the worker delay, your phone should receive the generated response.
 
 - If no `ingest inbound sms` log appears, Twilio is not reaching the app. Check the `SmsUrl`, ngrok process, and HTTP method.
 - If Twilio returns `SmsUrl is not valid`, make sure the URL has no line breaks or placeholder text.
+- If the app returns `403`, check that Twilio is calling the exact ngrok URL configured in `SmsUrl` and that `TWILIO_AUTH_TOKEN` matches the account.
 - If the app records the inbound message but the phone receives no reply, check worker logs and message status in the admin UI.
 - If using trial Twilio accounts, the recipient phone number may need to be verified in Twilio before outbound SMS can be delivered.

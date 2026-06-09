@@ -123,9 +123,11 @@ The health check also reports whether the worker heartbeat is fresh enough to co
 - `TWILIO_API_KEY_SID` optional API key auth alternative
 - `TWILIO_API_KEY_SECRET` optional API key auth alternative
 - `TWILIO_MESSAGING_SERVICE_SID` optional sender override for Twilio Messaging Services
+- `TWILIO_VALIDATE_SIGNATURE` optional webhook signature validation toggle. Defaults to enabled when `SMS_GATEWAY=twilio`
 - `SIMULATED_DELAY_MIN_MS` optional minimum worker delay
 - `SIMULATED_DELAY_MAX_MS` optional maximum worker delay
 - `WORKER_ID` optional worker label
+- `WORKER_CONCURRENCY` optional number of jobs a worker processes concurrently. Defaults to `5`
 
 ## Real Twilio outbound
 
@@ -136,6 +138,8 @@ SMS_GATEWAY=twilio
 TWILIO_ACCOUNT_SID=AC...
 TWILIO_AUTH_TOKEN=...
 ```
+
+`TWILIO_AUTH_TOKEN` is also used to validate inbound webhook signatures. Keep `TWILIO_VALIDATE_SIGNATURE` unset or set to `true` for real Twilio traffic. Set it to `false` only for unsigned local curl smoke tests.
 
 API key auth is also supported:
 
@@ -170,7 +174,7 @@ Frontend coverage:
 - run `web`, `worker`, and `postgres` as separate services
 - set `DATABASE_URL` to the production Postgres connection string
 - keep at least one worker replica running so queued SMS jobs are processed
-- scale worker replicas horizontally when queue depth or job age increases
+- scale worker replicas horizontally or increase `WORKER_CONCURRENCY` when queue depth or job age increases
 - expose `/api/webhooks/twilio` as the Twilio inbound SMS webhook URL
 - use `/api/health` for readiness and `/api/metrics` for operational visibility
 - store Twilio credentials as secrets, not committed env files
@@ -186,7 +190,7 @@ For a quick manual check, open the home page and look at the operational metrics
 
 Claimed jobs use a lease. If the worker crashes mid-processing, an expired `running` job can be reclaimed and retried automatically instead of remaining stuck forever.
 
-Outbound sends use a stable idempotency key derived from the generated reply message id. In the mock Twilio gateway, retries return the same provider message id instead of creating a duplicate send.
+Outbound sends use a stable idempotency key derived from the generated reply message id. In the mock Twilio gateway, retries return the same provider message id instead of creating a duplicate send. In the real Twilio gateway, the same key is sent as `X-Twilio-Idempotency-Token`.
 
 The worker writes a heartbeat into Postgres while it is running, so `/api/health` can tell the difference between a live system and a stalled processor.
 
@@ -194,6 +198,7 @@ The worker writes a heartbeat into Postgres while it is running, so `/api/health
 
 - inbound webhook returns quickly and only persists/enqueues work
 - duplicate Twilio deliveries are deduplicated by `MessageSid`
+- Twilio webhook signatures are validated when real Twilio mode is enabled
 - jobs survive worker crashes through leases and retries
 - outbound delivery retries are covered in tests
 - admin UI shows conversations, message history, and statuses

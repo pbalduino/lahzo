@@ -20,11 +20,12 @@ Patterns used:
 - transactional ingest: inbound message and job are written in the same database transaction
 - idempotent ingest: duplicate Twilio deliveries are deduplicated by `MessageSid`
 - lease-based job claiming: workers can recover jobs after crashes without losing work
+- webhook authenticity: real Twilio traffic is validated with `X-Twilio-Signature`
 
 ## Request flow
 
 1. Twilio posts an inbound SMS webhook.
-2. The webhook handler validates the payload and writes the message to the database in a transaction.
+2. The webhook handler validates the Twilio signature, validates the payload, and writes the message to the database in a transaction.
 3. The handler enqueues a job row in the same transaction.
 4. The handler returns `202 Accepted` immediately.
 5. A background worker polls pending jobs, claims one atomically, simulates 3-15 seconds of processing, and sends the outbound reply through a gateway abstraction.
@@ -36,7 +37,9 @@ Twilio has a 5-second timeout, while processing takes 3-15 seconds. The webhook 
 
 ## Decoupling message processing
 
-Processing is decoupled through a durable `jobs` table. The worker claims one pending job at a time using an atomic `UPDATE ... RETURNING` guard so two workers do not process the same job concurrently.
+Processing is decoupled through a durable `jobs` table. The worker claims jobs using an atomic `UPDATE ... RETURNING` guard so two workers do not process the same job concurrently.
+
+Each worker processes up to `WORKER_CONCURRENCY` jobs concurrently per polling cycle. The default is `5`, which avoids serializing all 3-15 second processing delays behind a single job while keeping the implementation simple enough to review. Additional worker replicas can run horizontally because job ownership is guarded in the database.
 
 For this assessment, Postgres is the queue boundary. That is a deliberate production-minded choice for an early system: it keeps the write path transactional, preserves message durability, supports multiple worker processes, and avoids introducing distributed queue infrastructure before the operational need is proven.
 
@@ -50,6 +53,8 @@ This gives the key behavior the assessment asks for:
 The worker also writes a heartbeat row in the database. The health endpoint can therefore distinguish between "database reachable" and "worker stale, missing, or down".
 
 ## Idempotency and duplicate webhook deliveries
+
+When `SMS_GATEWAY=twilio`, inbound webhooks are validated with Twilio's `X-Twilio-Signature` and `TWILIO_AUTH_TOKEN` before any database write. That prevents arbitrary unsigned POSTs from injecting messages into the system. Signature validation can be disabled only for local unsigned curl smoke tests with `TWILIO_VALIDATE_SIGNATURE=false`.
 
 Twilio may deliver the same webhook more than once. The inbound `MessageSid` is stored with a unique constraint. If the same webhook arrives again, the system returns the existing record and does not enqueue another job.
 
@@ -73,7 +78,7 @@ If the worker crashes after claiming a job, the job is not lost. Claimed jobs ha
 
 Outbound sends are keyed by the outbound message id. In the mock gateway, the same idempotency key returns the same provider response, so a retry after a crash does not create a duplicate send in the assessment environment.
 
-The real Twilio gateway can be enabled with `SMS_GATEWAY=twilio`. The simplest configuration is `TWILIO_ACCOUNT_SID` plus `TWILIO_AUTH_TOKEN`. API key credentials (`TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`) are also supported. When using the real provider, full exactly-once outbound delivery still depends on provider behavior or a stronger delivery ledger/outbox design.
+The real Twilio gateway can be enabled with `SMS_GATEWAY=twilio`. The simplest configuration is `TWILIO_ACCOUNT_SID` plus `TWILIO_AUTH_TOKEN`. API key credentials (`TWILIO_API_KEY_SID` and `TWILIO_API_KEY_SECRET`) are also supported. Real outbound sends include `X-Twilio-Idempotency-Token` using the generated outbound message id, reducing duplicate sends during retry/crash windows.
 
 ## Admin interface and authentication
 
@@ -96,7 +101,7 @@ The developer SMS simulator is shown only when `SMS_GATEWAY=mock`. When the real
 Main tables:
 
 - `conversations`: one row per phone pair
-- `messages`: inbound and outbound SMS records, status, timestamps, error state, and linkage between inbound and outbound messages
+- `messages`: inbound and outbound SMS records, status, `TIMESTAMPTZ` lifecycle timestamps, error state, and linkage between inbound and outbound messages
 - `jobs`: durable processing queue with attempt tracking and retry timing
 - the outbound send key is stable per generated reply, which makes retry behavior deterministic
 
@@ -127,6 +132,7 @@ What I chose:
 
 - Postgres as the durable system of record and initial job queue
 - a separate worker process so webhook latency is independent from message processing time
+- configurable per-worker concurrency so slow message processing does not serialize all queued work
 - atomic job claiming and leases so multiple workers can run without double-processing the same job
 - mock Twilio gateway by default to avoid external setup during review, with a real Twilio gateway available by configuration
 
@@ -162,7 +168,7 @@ What I accepted:
 
 - Postgres-backed queues are a good fit for this scale and exercise, but they require careful indexing, bounded polling, and operational visibility
 - a broker is not required to prove the architecture, because the code already isolates the queue behind repository functions and a worker boundary
-- the polling interval is intentionally small and simple for review; production tuning would depend on measured traffic and latency targets
+- the polling interval is intentionally small and simple for review; production tuning would depend on measured traffic, queue depth, job age, and database load
 
 ## What I would change for production scale
 
@@ -170,7 +176,7 @@ What I accepted:
 - add indexes and dashboards around queue depth, job age, attempts, and failed jobs
 - move from polling to `LISTEN/NOTIFY` or a broker such as SQS/RabbitMQ if queue depth or latency metrics justify it
 - add a proper outbox/inbox pattern with a delivery ledger
-- make per-worker concurrency configurable
+- tune `WORKER_CONCURRENCY` and worker replica count from queue-depth and job-age metrics
 - add tracing and dead-letter handling
 - add authentication and authorization to the admin UI
 - add retention and archival policies for conversation history
@@ -187,6 +193,7 @@ Operational requirements:
 
 - configure `DATABASE_URL` for both web and worker
 - keep the worker process deployed independently from the web process
+- set `WORKER_CONCURRENCY` based on provider rate limits, database capacity, and target response latency
 - configure Twilio inbound SMS to call `POST /api/webhooks/twilio`
 - use `SMS_GATEWAY=mock` for local review and `SMS_GATEWAY=twilio` for real outbound SMS
 - for local Twilio testing, use ngrok and the setup steps in `docs/twilio-setup.md`
@@ -200,6 +207,7 @@ The test suite runs against a real Postgres instance instead of an in-memory fak
 I made that choice because the highest-risk behavior in this system depends on database semantics:
 
 - transactionality between inbound message insert and job enqueue
+- rollback behavior when work inside the transaction fails
 - unique constraints for webhook idempotency
 - atomic job claiming with `UPDATE ... RETURNING`
 - lease expiry and retry behavior
@@ -210,8 +218,11 @@ Mocking the database would make the tests faster, but it would also avoid the ex
 Coverage includes:
 
 - webhook parsing
+- Twilio webhook signature acceptance/rejection
 - duplicate webhook ingestion / idempotency
+- database rollback on transactional failure
 - full inbound webhook -> worker -> outbound flow
+- concurrent worker processing
 - worker crash recovery for expired jobs
 - outbound retry after a temporary send failure
 - health reporting before the worker heartbeat exists
@@ -219,6 +230,7 @@ Coverage includes:
 ## Spec checklist
 
 - 5-second webhook timeout: addressed by persisting and enqueuing before returning `202`
+- webhook authenticity: addressed by Twilio signature validation in real provider mode
 - duplicate webhook deliveries: addressed by unique `MessageSid`
 - out-of-order delivery: addressed by stable timestamp ordering in the admin UI
 - message loss: addressed by durable writes, job leasing, and retryable failed jobs
@@ -229,4 +241,4 @@ Coverage includes:
 
 Residual production risk:
 
-- a real external SMS provider may still require a stronger delivery ledger or provider-level idempotency to fully eliminate duplicate outbound sends during crash windows
+- provider-level idempotency reduces duplicate outbound sends, but a high-scale production system should still add a stronger delivery ledger/outbox with reconciliation against provider status callbacks

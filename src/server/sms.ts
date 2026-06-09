@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import twilio from "twilio";
 import { z } from "zod";
 import {
   claimJob,
@@ -50,6 +51,8 @@ export async function parseWebhookRequest(request: Request) {
     raw = Object.fromEntries(new URLSearchParams(text));
   }
 
+  validateTwilioSignature(request, raw, contentType);
+
   const parsed = twilioPayloadSchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error("Invalid Twilio payload");
@@ -72,17 +75,73 @@ export async function parseWebhookRequest(request: Request) {
   };
 }
 
+function validateTwilioSignature(request: Request, payload: Record<string, string>, contentType: string) {
+  const shouldValidate = env.TWILIO_VALIDATE_SIGNATURE ?? env.SMS_GATEWAY === "twilio";
+  if (!shouldValidate) {
+    return;
+  }
+
+  if (!contentType.includes("application/x-www-form-urlencoded")) {
+    throw new Error("Twilio signature validation requires form-urlencoded webhook payloads");
+  }
+
+  if (!env.TWILIO_AUTH_TOKEN) {
+    throw new Error("TWILIO_AUTH_TOKEN is required to validate Twilio webhook signatures");
+  }
+
+  const signature = request.headers.get("x-twilio-signature");
+  if (!signature) {
+    throw new Error("Missing Twilio signature");
+  }
+
+  const valid = twilio.validateRequest(env.TWILIO_AUTH_TOKEN, signature, getPublicRequestUrl(request), payload);
+  if (!valid) {
+    throw new Error("Invalid Twilio signature");
+  }
+}
+
+function getPublicRequestUrl(request: Request) {
+  const url = new URL(request.url);
+  const forwardedProto = request.headers.get("x-forwarded-proto");
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const host = forwardedHost ?? request.headers.get("host");
+
+  if (forwardedProto) {
+    url.protocol = `${forwardedProto}:`;
+  }
+
+  if (host) {
+    url.host = host;
+  }
+
+  return url.toString();
+}
+
 export async function createMockInboundMessage(input: { from: string; to: string; body: string }) {
   return createMockInboundSms(input);
 }
 
 export async function processNextJob(workerId: string) {
   const [job] = await listPendingJobs(1);
-  if (!job) {
+  return processJob(workerId, job?.id ?? null);
+}
+
+export async function processNextJobs(workerId: string, limit: number) {
+  const jobs = await listPendingJobs(limit);
+  if (jobs.length === 0) {
+    return [];
+  }
+
+  const processed = await Promise.all(jobs.map((job) => processJob(workerId, job.id)));
+  return processed.filter((job): job is NonNullable<typeof job> => job !== null);
+}
+
+async function processJob(workerId: string, jobId: string | null) {
+  if (!jobId) {
     return null;
   }
 
-  const claimedJob = await claimJob(job.id, workerId);
+  const claimedJob = await claimJob(jobId, workerId);
   if (!claimedJob) {
     return null;
   }

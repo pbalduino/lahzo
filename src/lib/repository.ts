@@ -65,13 +65,13 @@ type MessageRow = {
   error: string | null;
   related_inbound_message_id: string | null;
   provider_message_id: string | null;
-  received_at: string;
-  processing_started_at: string | null;
-  processed_at: string | null;
-  sent_at: string | null;
-  failed_at: string | null;
-  created_at: string;
-  updated_at: string;
+  received_at: TimestampValue;
+  processing_started_at: TimestampValue | null;
+  processed_at: TimestampValue | null;
+  sent_at: TimestampValue | null;
+  failed_at: TimestampValue | null;
+  created_at: TimestampValue;
+  updated_at: TimestampValue;
 };
 
 type JobRow = {
@@ -81,9 +81,11 @@ type JobRow = {
   payload_json: { messageId: string } | string;
   attempts: number;
   max_attempts: number;
-  available_at: string;
-  lease_expires_at: string | null;
+  available_at: TimestampValue;
+  lease_expires_at: TimestampValue | null;
 };
+
+type TimestampValue = string | Date;
 
 const JOB_LEASE_MS = 60_000;
 const WORKER_HEARTBEAT_STALE_MS = 30_000;
@@ -189,9 +191,9 @@ export async function listConversations(): Promise<ConversationSummary[]> {
     id: string;
     from_phone: string;
     to_phone: string;
-    last_message_at: string;
-    created_at: string;
-    updated_at: string;
+    last_message_at: TimestampValue;
+    created_at: TimestampValue;
+    updated_at: TimestampValue;
     message_count: string;
     last_message_body: string | null;
     last_message_status: MessageStatus | null;
@@ -228,12 +230,12 @@ export async function listConversations(): Promise<ConversationSummary[]> {
     id: row.id,
     fromPhone: row.from_phone,
     toPhone: row.to_phone,
-    lastMessageAt: row.last_message_at,
+    lastMessageAt: toIso(row.last_message_at),
     lastMessageBody: row.last_message_body,
     lastMessageStatus: row.last_message_status,
     messageCount: Number(row.message_count),
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
   }));
 }
 
@@ -271,12 +273,12 @@ export async function getOperationalMetrics(): Promise<OperationalMetrics> {
     countMessageStatus("failed"),
     countMessageStatus("queued"),
     countMessageStatus("sending"),
-    query<{ value: string | null }>("SELECT MAX(created_at) AS value FROM messages"),
-    query<{ value: string | null }>("SELECT MAX(created_at) AS value FROM jobs"),
+    query<{ value: TimestampValue | null }>("SELECT MAX(created_at) AS value FROM messages"),
+    query<{ value: TimestampValue | null }>("SELECT MAX(created_at) AS value FROM jobs"),
     getLatestWorkerHeartbeat(),
   ]);
 
-  const workerHeartbeatAt = workerHeartbeat?.last_seen_at ?? null;
+  const workerHeartbeatAt = toIso(workerHeartbeat?.last_seen_at ?? null);
   const workerHealthy =
     workerHeartbeatAt !== null &&
     Date.now() - new Date(workerHeartbeatAt).getTime() <= WORKER_HEARTBEAT_STALE_MS;
@@ -303,8 +305,8 @@ export async function getOperationalMetrics(): Promise<OperationalMetrics> {
       queued,
       sending,
     },
-    lastMessageAt: lastMessageAt.rows[0]?.value ?? null,
-    lastJobAt: lastJobAt.rows[0]?.value ?? null,
+    lastMessageAt: toIso(lastMessageAt.rows[0]?.value ?? null),
+    lastJobAt: toIso(lastJobAt.rows[0]?.value ?? null),
   };
 }
 
@@ -315,8 +317,8 @@ export async function getConversationById(
     id: string;
     from_phone: string;
     to_phone: string;
-    created_at: string;
-    updated_at: string;
+    created_at: TimestampValue;
+    updated_at: TimestampValue;
   }>(
     `
     SELECT id, from_phone, to_phone, created_at, updated_at
@@ -344,8 +346,8 @@ export async function getConversationById(
     id: conversation.rows[0].id,
     fromPhone: conversation.rows[0].from_phone,
     toPhone: conversation.rows[0].to_phone,
-    createdAt: conversation.rows[0].created_at,
-    updatedAt: conversation.rows[0].updated_at,
+    createdAt: toIso(conversation.rows[0].created_at),
+    updatedAt: toIso(conversation.rows[0].updated_at),
     messages: messages.rows.map(mapMessageRow),
   };
 }
@@ -647,7 +649,7 @@ async function countMessageStatus(status: MessageStatus) {
 }
 
 async function getLatestWorkerHeartbeat() {
-  const result = await query<{ worker_id: string; last_seen_at: string }>(`
+  const result = await query<{ worker_id: string; last_seen_at: TimestampValue }>(`
     SELECT worker_id, last_seen_at
     FROM worker_heartbeats
     ORDER BY last_seen_at DESC
@@ -668,13 +670,13 @@ function mapMessageRow(row: MessageRow): MessageRecord {
     error: row.error,
     relatedInboundMessageId: row.related_inbound_message_id,
     providerMessageId: row.provider_message_id,
-    receivedAt: row.received_at,
-    processingStartedAt: row.processing_started_at,
-    processedAt: row.processed_at,
-    sentAt: row.sent_at,
-    failedAt: row.failed_at,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    receivedAt: toIso(row.received_at),
+    processingStartedAt: toIso(row.processing_started_at),
+    processedAt: toIso(row.processed_at),
+    sentAt: toIso(row.sent_at),
+    failedAt: toIso(row.failed_at),
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
   };
 }
 
@@ -691,7 +693,17 @@ function mapJobRow(row: JobRow): ProcessJob {
     payload,
     attempts: row.attempts,
     maxAttempts: row.max_attempts,
-    availableAt: row.available_at,
-    leaseExpiresAt: row.lease_expires_at,
+    availableAt: toIso(row.available_at),
+    leaseExpiresAt: toIso(row.lease_expires_at),
   };
+}
+
+function toIso(value: TimestampValue): string;
+function toIso(value: TimestampValue | null | undefined): string | null;
+function toIso(value: TimestampValue | null | undefined) {
+  if (!value) {
+    return null;
+  }
+
+  return value instanceof Date ? value.toISOString() : value;
 }

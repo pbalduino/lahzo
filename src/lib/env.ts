@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+const optionalBooleanSchema = z
+  .enum(["true", "false"])
+  .transform((value) => value === "true")
+  .optional();
+
 const envSchema = z.object({
   DATABASE_URL: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().positive().optional(),
@@ -9,7 +14,9 @@ const envSchema = z.object({
   TWILIO_API_KEY_SECRET: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_MESSAGING_SERVICE_SID: z.string().optional(),
+  TWILIO_VALIDATE_SIGNATURE: optionalBooleanSchema,
   WORKER_ID: z.string().optional(),
+  WORKER_CONCURRENCY: z.coerce.number().int().positive().optional(),
   SIMULATED_DELAY_MIN_MS: z.coerce.number().int().positive().optional(),
   SIMULATED_DELAY_MAX_MS: z.coerce.number().int().positive().optional(),
 });

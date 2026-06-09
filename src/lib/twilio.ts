@@ -1,4 +1,3 @@
-import twilio from "twilio";
 import { env } from "@/lib/env";
 import { createId } from "@/lib/ids";
 
@@ -33,34 +32,59 @@ class MockSmsGateway implements SmsGateway {
 }
 
 class TwilioSmsGateway implements SmsGateway {
-  private readonly client = createTwilioClient();
+  private readonly config = getTwilioConfig();
 
   async sendSms(input: SendSmsInput): Promise<SendSmsResult> {
-    const message = await this.client.messages.create({
-      to: input.to,
-      body: input.body,
-      ...(env.TWILIO_MESSAGING_SERVICE_SID
-        ? { messagingServiceSid: env.TWILIO_MESSAGING_SERVICE_SID }
-        : { from: input.from }),
+    const body = new URLSearchParams({
+      To: input.to,
+      Body: input.body,
     });
 
-    return { providerMessageId: message.sid };
+    if (env.TWILIO_MESSAGING_SERVICE_SID) {
+      body.set("MessagingServiceSid", env.TWILIO_MESSAGING_SERVICE_SID);
+    } else {
+      body.set("From", input.from);
+    }
+
+    const response = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${this.config.accountSid}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${this.config.basicAuth}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Twilio-Idempotency-Token": input.idempotencyKey,
+        },
+        body,
+      },
+    );
+
+    const payload = (await response.json()) as { sid?: string; message?: string };
+    if (!response.ok || !payload.sid) {
+      throw new Error(payload.message ?? `Twilio send failed with status ${response.status}`);
+    }
+
+    return { providerMessageId: payload.sid };
   }
 }
 
-function createTwilioClient() {
+function getTwilioConfig() {
   if (!env.TWILIO_ACCOUNT_SID) {
     throw new Error("TWILIO_ACCOUNT_SID is required when SMS_GATEWAY=twilio");
   }
 
   if (env.TWILIO_API_KEY_SID && env.TWILIO_API_KEY_SECRET) {
-    return twilio(env.TWILIO_API_KEY_SID, env.TWILIO_API_KEY_SECRET, {
+    return {
       accountSid: env.TWILIO_ACCOUNT_SID,
-    });
+      basicAuth: Buffer.from(`${env.TWILIO_API_KEY_SID}:${env.TWILIO_API_KEY_SECRET}`).toString("base64"),
+    };
   }
 
   if (env.TWILIO_AUTH_TOKEN) {
-    return twilio(env.TWILIO_ACCOUNT_SID, env.TWILIO_AUTH_TOKEN);
+    return {
+      accountSid: env.TWILIO_ACCOUNT_SID,
+      basicAuth: Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64"),
+    };
   }
 
   throw new Error(

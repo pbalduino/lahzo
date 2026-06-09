@@ -21,6 +21,7 @@ export async function POST(request: Request) {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : "Invalid webhook payload";
-    return NextResponse.json({ error: message }, { status: 400 });
+    const status = message.toLowerCase().includes("signature") ? 403 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }

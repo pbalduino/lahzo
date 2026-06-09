@@ -30,6 +30,11 @@ afterEach(async () => {
   }
 
   delete process.env.DATABASE_URL;
+  delete process.env.SMS_GATEWAY;
+  delete process.env.TWILIO_ACCOUNT_SID;
+  delete process.env.TWILIO_AUTH_TOKEN;
+  delete process.env.TWILIO_VALIDATE_SIGNATURE;
+  delete process.env.WORKER_CONCURRENCY;
   delete process.env.SIMULATED_DELAY_MIN_MS;
   delete process.env.SIMULATED_DELAY_MAX_MS;
   vi.restoreAllMocks();
@@ -99,6 +104,97 @@ test("parseWebhookRequest supports Twilio form payloads", async () => {
     to: "+15550009999",
     body: "Need help",
   });
+});
+
+test("twilio webhook rejects unsigned requests when signature validation is enabled", async () => {
+  process.env.TWILIO_AUTH_TOKEN = "test-token";
+  process.env.TWILIO_VALIDATE_SIGNATURE = "true";
+  await loadModules();
+  const { POST } = await import("../app/api/webhooks/twilio/route");
+
+  const response = await POST(
+    new Request("https://example.ngrok-free.app/api/webhooks/twilio", {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams({
+        MessageSid: "SMUNSIGNED",
+        From: "+15550001111",
+        To: "+15550009999",
+        Body: "Unsigned",
+      }),
+    }),
+  );
+
+  expect(response.status).toBe(403);
+});
+
+test("twilio webhook accepts signed form requests", async () => {
+  process.env.TWILIO_AUTH_TOKEN = "test-token";
+  process.env.TWILIO_VALIDATE_SIGNATURE = "true";
+  const { repository } = await loadModules();
+  const { POST } = await import("../app/api/webhooks/twilio/route");
+  const twilio = await import("twilio");
+  const url = "https://example.ngrok-free.app/api/webhooks/twilio";
+  const payload = {
+    MessageSid: "SMSIGNED",
+    From: "+15550001111",
+    To: "+15550009999",
+    Body: "Signed",
+  };
+  const signature = twilio.default.getExpectedTwilioSignature("test-token", url, payload);
+
+  const response = await POST(
+    new Request(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        "x-twilio-signature": signature,
+      },
+      body: new URLSearchParams(payload),
+    }),
+  );
+
+  expect(response.status).toBe(202);
+  expect(await repository.listPendingJobs(10)).toHaveLength(1);
+  expect(await repository.getMessageByExternalId("SMSIGNED")).not.toBeNull();
+});
+
+test("database transaction rolls back persisted webhook work when a failure occurs", async () => {
+  const { db, repository } = await loadModules();
+
+  await expect(
+    db.withTransaction(async (client) => {
+      const timestamp = new Date().toISOString();
+      await client.query(
+        `
+        INSERT INTO conversations (id, from_phone, to_phone, last_message_at, created_at, updated_at)
+        VALUES ('conversation_rollback', '+15550001111', '+15550009999', $1, $1, $1)
+      `,
+        [timestamp],
+      );
+      await client.query(
+        `
+        INSERT INTO messages (
+          id, conversation_id, direction, external_id, body, status, error,
+          related_inbound_message_id, provider_message_id, received_at,
+          processing_started_at, processed_at, sent_at, failed_at, created_at, updated_at
+        ) VALUES (
+          'message_rollback', 'conversation_rollback', 'inbound', 'SMROLLBACK',
+          'rollback', 'received', NULL, NULL, NULL, $1, NULL, NULL, NULL, NULL, $1, $1
+        )
+      `,
+        [timestamp],
+      );
+
+      throw new Error("simulated database failure");
+    }),
+  ).rejects.toThrow("simulated database failure");
+
+  expect(await repository.listConversations()).toHaveLength(0);
+  expect(await repository.getMessageByExternalId("SMROLLBACK")).toBeNull();
+  expect(await repository.listPendingJobs(10)).toHaveLength(0);
 });
 
 test("expired running jobs are claimable again after a worker crash", async () => {
@@ -182,6 +278,33 @@ test("full inbound-to-outbound flow completes through the worker", async () => {
   expect(outbound.status).toBe("sent");
   expect(outbound.relatedInboundMessageId).toBe(inbound.id);
   expect(outbound.providerMessageId).toMatch(/^mock_twilio_/);
+});
+
+test("processNextJobs processes multiple jobs concurrently", async () => {
+  process.env.SIMULATED_DELAY_MIN_MS = "1";
+  process.env.SIMULATED_DELAY_MAX_MS = "1";
+
+  const { repository, sms } = await loadModules();
+
+  await Promise.all([
+    repository.ingestInboundSms({
+      messageSid: "SMCONCURRENT1",
+      from: "+15550001111",
+      to: "+15550009999",
+      body: "First",
+    }),
+    repository.ingestInboundSms({
+      messageSid: "SMCONCURRENT2",
+      from: "+15550002222",
+      to: "+15550009999",
+      body: "Second",
+    }),
+  ]);
+
+  const processed = await sms.processNextJobs("test-worker", 2);
+
+  expect(processed).toHaveLength(2);
+  expect(await repository.listPendingJobs(10)).toHaveLength(0);
 });
 
 test("dev inbound route respects UI outbound From and To fields", async () => {

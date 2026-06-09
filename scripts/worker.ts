@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { env } from "@/lib/env";
 import { recordWorkerHeartbeat } from "@/lib/repository";
 import { logger } from "@/lib/logger";
-import { processNextJob } from "@/server/sms";
+import { processNextJobs } from "@/server/sms";
 import { sleep } from "@/lib/time";
 
 const workerId = process.env.WORKER_ID ?? `worker_${randomUUID()}`;
+const concurrency = env.WORKER_CONCURRENCY ?? 5;
 let running = true;
 
 process.on("SIGINT", () => {
@@ -18,12 +20,12 @@ process.on("SIGTERM", () => {
 async function main() {
   // Polling is acceptable here because the queue is persisted in Postgres and the
   // assessment values clarity over distributed-queue complexity.
-  logger.info("worker started", { workerId });
+  logger.info("worker started", { workerId, concurrency });
   await recordHeartbeat();
   while (running) {
     await recordHeartbeat();
-    const processed = await processNextJob(workerId);
-    if (!processed) {
+    const processed = await processNextJobs(workerId, concurrency);
+    if (processed.length === 0) {
       await sleep(500);
     }
   }
